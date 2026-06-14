@@ -218,6 +218,34 @@ def open_doc():
         subprocess.Popen(["xdg-open", doc])
 
 
+def open_report():
+    """Generate and show the status report."""
+    try:
+        result = subprocess.run(
+            ["surface-acpi-watcher", "--report"],
+            capture_output=True, text=True, timeout=10)
+        report = result.stdout
+    except Exception:
+        report = "Failed to generate report"
+    # Show in a dialog
+    dialog = Gtk.Dialog(title="Surface ACPI Quell — Status Report",
+                         transient_for=None, flags=0)
+    dialog.add_buttons(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    dialog.set_default_size(500, 400)
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    textview = Gtk.TextView()
+    textview.set_editable(False)
+    textview.set_wrap_mode(Gtk.WrapMode.WORD)
+    buf = textview.get_buffer()
+    buf.set_text(report)
+    scrolled.add(textview)
+    dialog.vbox.pack_start(scrolled, True, True, 0)
+    dialog.show_all()
+    dialog.run()
+    dialog.destroy()
+
+
 def open_log():
     term = (shutil.which("gnome-terminal") or shutil.which("kgx")
             or "xterm")

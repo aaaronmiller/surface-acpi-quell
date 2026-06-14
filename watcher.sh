@@ -169,6 +169,89 @@ print_status() {
     echo "  Errors:  $e"
 }
 
+
+# ── Report ───────────────────────────────────────────────────────────────────
+
+do_report() {
+    local data_dir="/var/lib/surface-acpi-quell"
+    local state_file="$data_dir/state.json"
+    local hist_file="$data_dir/history.log"
+
+    echo "=========================================="
+    echo "  Surface ACPI Quell — Status Report"
+    echo "  $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "=========================================="
+    echo ""
+
+    # Current state
+    if [ -f "$state_file" ]; then
+        local ts irq mod acpi kern upt
+        ts=$(grep -o '"timestamp": [0-9]*' "$state_file" | cut -d' ' -f2)
+        irq=$(grep -o '"irq9_count": [0-9\-]*' "$state_file" | cut -d' ' -f2)
+        mod=$(grep -o '"module_loaded": [01]' "$state_file" | cut -d' ' -f2)
+        acpi=$(grep -o '"acpi_errors_1m": [0-9\-]*' "$state_file" | cut -d' ' -f2)
+        kern=$(grep -o '"kernel": "[^"]*"' "$state_file" | cut -d'"' -f4)
+        upt=$(grep -o '"uptime_seconds": [0-9]*' "$state_file" | cut -d' ' -f2)
+
+        local uptime_str
+        if [ "$upt" -gt 86400 ]; then
+            uptime_str="$((upt / 86400))d $(((upt % 86400) / 3600))h"
+        elif [ "$upt" -gt 3600 ]; then
+            uptime_str="$((upt / 3600))h $(((upt % 3600) / 60))m"
+        else
+            uptime_str="${upt}s"
+        fi
+
+        echo "  Kernel:       $kern"
+        echo "  Uptime:       $uptime_str"
+        echo "  Module:       $([ "$mod" = "1" ] && echo 'loaded ✅' || echo 'NOT LOADED ❌')"
+        echo "  IRQ 9 count:  $irq"
+        echo "  ACPI errs/m:  ${acpi:-N/A}"
+        echo "  Last check:   $(date -d "@$ts" '+%H:%M:%S' 2>/dev/null || echo 'N/A')"
+    else
+        echo "  No state data yet (watcher hasn't run)"
+    fi
+    echo ""
+
+    # History summary
+    if [ -f "$hist_file" ] && [ -s "$hist_file" ]; then
+        local total_entries
+        total_entries=$(wc -l < "$hist_file")
+        local error_entries
+        error_entries=$(awk -F',' '$3 > 0' "$hist_file" | wc -l)
+        local first_ts last_ts
+        first_ts=$(tail -n +2 "$hist_file" | head -1 | cut -d',' -f1)
+        last_ts=$(tail -1 "$hist_file" | cut -d',' -f1)
+        local duration=${duration:-0}
+        if [ -n "$last_ts" ] && [ -n "$first_ts" ] && [ "$last_ts" -gt "$first_ts" ] 2>/dev/null; then
+            duration=$(( last_ts - first_ts ))
+        fi
+
+        echo "  History:      ${total_entries} entries over ${duration}s"
+        echo "  Issues:       ${error_entries} runs had problems"
+        echo "  Health:       $([ "$error_entries" -eq 0 ] && echo '100% ✅' || echo "~$(( (total_entries - error_entries) * 100 / total_entries ))%")"
+        echo ""
+
+        # Last 10 readings
+        echo "  Last 10 checks (IRQ9, Problems, Module, ACPI errs):"
+        echo "  ───────────────────────────────────────────────"
+        tail -10 "$hist_file" | awk -F',' '{
+            printf "  %s  IRQ=%-8s  %s  Mod=%s  Errs=%s
+",
+                strftime("%H:%M:%S", $1),
+                $2,
+                ($3 > 0 ? "❗" : "✓"),
+                ($4 == 1 ? "✓" : "✗"),
+                ($5 > 0 ? "❗" : "✓")
+        }' 2>/dev/null
+    else
+        echo "  No history data yet."
+    fi
+    echo ""
+    echo "=========================================="
+}
+
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 problems=0
@@ -178,6 +261,7 @@ for arg in "$@"; do
         --verbose|-v) VERBOSE=true ;;
         --fix|-f)     FIX_MODE=true ;;
         --status|-s)  print_status; exit 0 ;;
+        --report|-r)  do_report; exit 0 ;;
         --help|-h)
             echo "Usage: $0 [--verbose|--fix|--status|--help]"
             echo "  --verbose   Print status to stdout"
@@ -245,6 +329,39 @@ if $FIX_MODE && [ "$problems" -eq 0 ]; then
     rmmod "$MODULE_NAME" 2>/dev/null || true
     sleep 1
     modprobe "$MODULE_NAME" 2>/dev/null || repair_module
+fi
+
+# ── Data logging ──────────────────────────────────────────────────────────
+
+DATA_DIR="/var/lib/surface-acpi-quell"
+DATA_FILE="$DATA_DIR/history.log"
+STATE_FILE="$DATA_DIR/state.json"
+
+if [ -d "$DATA_DIR" ]; then
+    # Collect current readings
+    IRQ_NOW=$(awk '/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}' /proc/interrupts 2>/dev/null || echo -1)
+    MOD_OK=$([ "$problems" -eq 0 ] && echo "1" || echo "0")
+    ACPI_NOW=$(timeout 2 journalctl -k --since "30 seconds ago" --no-pager 2>/dev/null | grep -c "ACPI Error" || true)
+    
+    # Append CSV: timestamp,irq9_count,problems,module_ok,acpi_errors
+    echo "$(date +%s),${IRQ_NOW},${problems},${MOD_OK},${ACPI_NOW}" >> "$DATA_FILE"
+    
+    # Keep last 2000 lines (ring buffer)
+    tail -n 2000 "$DATA_FILE" > "${DATA_FILE}.tmp" && mv "${DATA_FILE}.tmp" "$DATA_FILE"
+    
+    # Update JSON state file
+    cat > "$STATE_FILE" << JSONEOF
+{
+  "timestamp": $(date +%s),
+  "irq9_count": ${IRQ_NOW},
+  "irq9_rate": ${IRQ9_RATE:-0},
+  "problems": ${problems},
+  "module_loaded": ${MOD_OK},
+  "acpi_errors_1m": ${ACPI_NOW},
+  "kernel": "$(uname -r)",
+  "uptime_seconds": $(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || echo 0)
+}
+JSONEOF
 fi
 
 exit "$problems"
