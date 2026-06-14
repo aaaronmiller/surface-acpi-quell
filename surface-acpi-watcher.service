@@ -1,0 +1,13 @@
+[Unit]
+Description=Surface ACPI Quell — watcher that checks & repairs the fix
+Documentation=file:/usr/local/share/doc/surface-acpi-quell/README.md
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/surface-acpi-watcher
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Surface ACPI Quell — watcher timer (every 60s)
+Documentation=file:/usr/local/share/doc/surface-acpi-quell/README.md
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

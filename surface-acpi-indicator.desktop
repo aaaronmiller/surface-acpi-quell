@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Surface ACPI Quell
+Comment=Tray indicator for the ACPI error storm fix
+Exec=/usr/local/bin/surface-acpi-indicator
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true

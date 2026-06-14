@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="gOk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFC107"/>
+      <stop offset="100%" stop-color="#FF8F00"/>
+    </linearGradient>
+    <linearGradient id="nipOk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E65100"/>
+      <stop offset="100%" stop-color="#BF360C"/>
+    </linearGradient>
+  </defs>
+  <!-- Left breast -->
+  <path d="M18 44 C12 36 12 24 18 20 C22 17 28 18 30 24 C32 30 30 38 24 44 Z" 
+        fill="url(#gOk)" stroke="#E65100" stroke-width="1.5"/>
+  <!-- Right breast -->
+  <path d="M46 44 C52 36 52 24 46 20 C42 17 36 18 34 24 C32 30 34 38 40 44 Z" 
+        fill="url(#gOk)" stroke="#E65100" stroke-width="1.5"/>
+  <!-- Left nipple -->
+  <circle cx="24" cy="28" r="4" fill="url(#nipOk)" stroke="#BF360C" stroke-width="1"/>
+  <!-- Right nipple -->
+  <circle cx="40" cy="28" r="4" fill="url(#nipOk)" stroke="#BF360C" stroke-width="1"/>
+</svg>

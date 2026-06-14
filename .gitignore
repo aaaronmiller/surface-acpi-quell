@@ -1,0 +1,30 @@
+# Build artifacts
+*.o
+*.ko
+*.mod.c
+*.mod.o
+*.order
+*.symvers
+Module.symvers
+modules.order
+.*.cmd
+.cache.mk
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local install
+/install_manifest.txt
+*.mod
