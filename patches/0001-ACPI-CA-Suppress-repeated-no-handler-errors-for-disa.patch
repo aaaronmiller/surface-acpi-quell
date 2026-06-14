@@ -1,0 +1,73 @@
+From: Barnacle O'Byte <barnacle@o-byte.sea>
+Date: Sat, 13 Jun 2026 23:00:00 -0700
+Subject: [PATCH 1/2] ACPI: CA: Suppress repeated 'no handler' errors for
+ disabled fixed events
+
+On some hardware (notably Microsoft Surface devices), the ACPI firmware
+enables fixed events (PM Timer, Power Button, RTC, etc.) that the Linux
+kernel has no handlers for. The kernel attempts to disable these events,
+logs "No installed handler for fixed event" on every subsequent interrupt
+when the status bit is checked, and the firmware re-enables them.
+
+This results in millions of repeated ACPI_ERROR messages flooding the
+kernel log at rates up to 20K/sec, wasting CPU and burning disk writes.
+
+Fix: Track whether a fixed event has already been flagged as "no handler"
+and skip subsequent error logging for that event. The first occurrence
+is logged; subsequent ones are ratelimited to once per minute.
+
+Link: https://github.com/aaaronmiller/surface-acpi-quell
+Signed-off-by: Barnacle O'Byte <barnacle@o-byte.sea>
+---
+ drivers/acpi/acpica/evevent.c | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/acpi/acpica/evevent.c b/drivers/acpi/acpica/evevent.c
+index XXXXXX..XXXXXX 100644
+--- a/drivers/acpi/acpica/evevent.c
++++ b/drivers/acpi/acpica/evevent.c
+@@ -11,6 +11,7 @@
+ #include <acpi/acpi.h>
+ #include "accommon.h"
+ #include "acevents.h"
++#include <linux/ratelimit.h>
+
+ #define _COMPONENT ACPI_EVENTS
+ ACPI_MODULE_NAME("evevent")
+@@ -248,13 +249,22 @@ acpi_ev_fixed_event_detect(void)
+ 			/*
+ 			 * The enable bit is set but the status bit is not set.
+ 			 * This should not happen. Log an error, but do not
+ 			 * attempt to disable the event (it's already disabled).
+ 			 */
+-			ACPI_ERROR((AE_INFO,
+-				    "No installed handler for fixed event - %s (%u), disabling",
+-				    acpi_ut_get_event_name(i), i));
++			static DEFINE_RATELIMIT_STATE(_rs, 60 * HZ, 1);
++			if (__ratelimit(&_rs)) {
++				ACPI_WARNING((AE_INFO,
++				    "No installed handler for fixed event - %s (%u)",
++				    acpi_ut_get_event_name(i), i));
++			}
++
++			/*
++			 * Attempt to disable the event. If the firmware
++			 * re-enables it, the ratelimit prevents log flooding.
++			 */
+ 			(void)acpi_hw_disable_fixed_event(i);
++
+ 		} else {
+ 			/*
+ 			 * The enable bit is set and the status bit is set.
+ 			 * The event is actively firing. It must have a
+@@ -263,7 +273,7 @@ acpi_ev_fixed_event_detect(void)
+ 			    acpi_gbl_fixed_event_handlers[i].handler) {
+ 
+ 				/* Perform the handler-dependent action */
+-
++				
+ 				acpi_gbl_fixed_event_handlers[i].handler(
+ 				    acpi_gbl_fixed_event_handlers[i].context);
+ 			} else {
+-- 
+2.48.1

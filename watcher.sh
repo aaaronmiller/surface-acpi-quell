@@ -285,6 +285,31 @@ do_report() {
     fi
     echo ""
 
+    # Trend analysis (last 30 readings)
+    if [ -f "$hist_file" ] && [ "$(wc -l < "$hist_file")" -gt 30 ]; then
+        local recent trend_irq first_irq last_irq irq_slope
+        recent=$(tail -30 "$hist_file")
+        first_irq=$(echo "$recent" | head -1 | cut -d',' -f2)
+        last_irq=$(echo "$recent" | tail -1 | cut -d',' -f2)
+        irq_slope=$(( (last_irq - first_irq) / 30 ))
+
+        echo "  Trend (last 30 checks, ~30min):"
+        if [ "$irq_slope" -le 1 ]; then
+            echo "    IRQ 9:    stable (Δ${irq_slope}/check) ✅"
+        elif [ "$irq_slope" -le 10 ]; then
+            echo "    IRQ 9:    slowly rising (Δ${irq_slope}/check) ⚠️"
+        else
+            echo "    IRQ 9:    RISING (Δ${irq_slope}/check) 🚨"
+        fi
+
+        local err_entries problem_entries
+        err_entries=$(echo "$recent" | awk -F',' '{s+=$5} END {print s}')
+        problem_entries=$(echo "$recent" | awk -F',' '$3 > 0' | wc -l)
+        echo "    Problems: ${problem_entries}/30 runs had issues"
+        echo "    ACPI errs: ${err_entries} total in last 30 checks"
+        echo ""
+    fi
+
     # History summary
     if [ -f "$hist_file" ] && [ -s "$hist_file" ]; then
         local total_entries
@@ -307,9 +332,8 @@ do_report() {
         # Last 10 readings
         echo "  Last 10 checks (IRQ9, Problems, Module, ACPI errs):"
         echo "  ───────────────────────────────────────────────"
-        tail -10 "$hist_file" | awk -F',' '{
-            printf "  %s  IRQ=%-8s  %s  Mod=%s  Errs=%s
-",
+        tail -n +2 "$hist_file" | tail -10 | awk -F',' '{
+            printf "  %s  IRQ=%-8s  %s  Mod=%s  Errs=%s\n",
                 strftime("%H:%M:%S", $1),
                 $2,
                 ($3 > 0 ? "❗" : "✓"),

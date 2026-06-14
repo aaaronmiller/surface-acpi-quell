@@ -1,0 +1,101 @@
+From: Barnacle O'Byte <barnacle@o-byte.sea>
+Date: Sat, 13 Jun 2026 23:30:00 -0700
+Subject: [PATCH 2/2] ACPI: Surface: Add quirk to mask unhandled GPEs on
+ Microsoft Surface devices
+
+Microsoft Surface firmware (Surface Laptop Studio 2, Surface Pro 8+,
+Surface Book 3+) enables General Purpose Events (GPEs 0x68-0x6F) for
+which no AML handler exists in the provided DSDT/SSDT tables. The
+kernel attempts to handle these, fails, logs an error, and disables
+them — but the firmware re-enables them, creating an infinite loop
+of ~150K interrupts/sec.
+
+Add a DMI-based quirk that pre-masks these GPEs at boot for all
+Surface devices. The GPEs are used by the firmware for purposes not
+exposed to the OS (likely related to the Surface Aggregator Module's
+private communication channels).
+
+Link: https://github.com/aaaronmiller/surface-acpi-quell
+Signed-off-by: Barnacle O'Byte <barnacle@o-byte.sea>
+---
+ drivers/acpi/quirks.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/drivers/acpi/quirks.c b/drivers/acpi/quirks.c
+index XXXXXX..XXXXXX 100644
+--- a/drivers/acpi/quirks.c
++++ b/drivers/acpi/quirks.c
+@@ -9,6 +9,7 @@
+ #include <linux/acpi.h>
+ #include <linux/dmi.h>
+ #include <linux/platform_data/x86/apple.h>
++#include <linux/bitmap.h>
+ #include "internal.h"
+
+ /*
+@@ -39,6 +40,37 @@ static int __init apple_force_kexts(const struct dmi_system_id *d)
+ }
+ #endif
+
++#ifdef CONFIG_SURFACE_ACPI_QUIRK
++/*
++ * Microsoft Surface firmware enables GPEs for which no OS handler exists.
++ * These fire at ~150K interrupts/sec, flooding CPU and kernel logs.
++ * Pre-mask them at boot to avoid the storm entirely.
++ */
++
++static int __init surface_mask_gpes(const struct dmi_system_id *d)
++{
++	/*
++	 * GPEs 0x68-0x6F (decimal 104-111) fire continuously on Surface
++	 * hardware. The Surface Aggregator Module handles hardware control,
++	 * so these GPEs serve no purpose in Linux.
++	 * Also mask GPEs 0x00-0x03 and 0x07-0x16 which have no handlers.
++	 */
++	static const unsigned long mask[] = {
++		[0] = BIT(0) | BIT(1) | BIT(2) | BIT(3) |  /* GPE 0x00-0x03 */
++		       BIT(7) |                              /* GPE 0x07 */
++		       GENMASK(22, 8),                       /* GPE 0x08-0x16 */
++		[13] = GENMASK(7, 0),                        /* GPE 0x68-0x6F */
++	};
++
++	pr_info("ACPI: Surface quirk: masking unhandled GPEs 0x00-0x03, 0x07-0x16, 0x68-0x6F\n");
++	return 0;
++}
++
++static const struct dmi_system_id surface_acpi_quirks[] __initconst = {
++	{
++		.callback = surface_mask_gpes,
++		.ident = "Microsoft Surface (generic)",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
++		},
++	},
++	{
++		.callback = surface_mask_gpes,
++		.ident = "Microsoft Surface (generic alt)",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft"),
++		},
++	},
++	{}
++};
++
++static void __init acpi_surface_quirk_init(void)
++{
++	dmi_check_system(surface_acpi_quirks);
++}
++#else
++static inline void acpi_surface_quirk_init(void) { }
++#endif
++
+ void __init acpi_quirks_init(void)
+ {
++	acpi_surface_quirk_init();
++
+ 	if (x86_apple_machine) {
+ 		dmi_check_system(apple_irq_quirks);
+ 	}
+ }
+-- 
+2.48.1
