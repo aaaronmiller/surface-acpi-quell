@@ -2,7 +2,7 @@
 /*
  * surface_fixed_event_quell.c - Suppress broken ACPI SCI on Surface hardware
  *
- * The Surface firmware generates ~20K ACPI interrupts/sec for fixed events
+ * The Surface firmware generates unnecessary ACPI interrupts for fixed events
  * that have no working Linux handlers (RTC, PM Timer, Power Button, etc.).
  * This wastes CPU, floods kernel logs, and burns NVMe writes.
  *
@@ -18,11 +18,12 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/acpi.h>
+#include <linux/dmi.h>
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Surface ACPI Quell — suppress broken ACPI SCI interrupts");
 MODULE_AUTHOR("Barnacle O'Byte");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.1.0");
 
 /* ── Parameters ─────────────────────────────────────────────────────────── */
 
@@ -36,9 +37,49 @@ module_param(check_interval_ms, uint, 0444);
 MODULE_PARM_DESC(check_interval_ms,
 	"Interval in ms between re-mask attempts (default: 10000)");
 
+static bool skip_hw_check = false;
+module_param(skip_hw_check, bool, 0444);
+MODULE_PARM_DESC(skip_hw_check,
+	"Skip Surface hardware check (default: false, only allowed on Surface)");
+
 /* ── State ──────────────────────────────────────────────────────────────── */
 
 static struct timer_list quell_timer;
+
+/* ── Safety: verify we're on Surface hardware ───────────────────────────────
+ *
+ * The IRQ 9 mask is safe on Surface because the Surface Aggregator Module
+ * handles battery, thermal, and platform monitoring. On non-Surface hardware
+ * this would break ACPI power management. Refuse to load unless we can
+ * confirm Surface hardware (or skip_hw_check is set).
+ */
+
+static int check_surface_hardware(void)
+{
+	const char *vendor;
+
+	if (skip_hw_check) {
+		pr_warn("surface_quell: hardware check skipped by module param\n");
+		return 0;
+	}
+
+	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
+	if (!vendor) {
+		pr_err("surface_quell: cannot determine hardware vendor\n");
+		return -ENODEV;
+	}
+
+	if (strstr(vendor, "Microsoft")) {
+		pr_info("surface_quell: detected Surface hardware (%s)\n",
+			vendor);
+		return 0;
+	}
+
+	pr_err("surface_quell: not Surface hardware (%s). "
+	       "IRQ 9 masking is unsafe on non-Surface systems. "
+	       "Set skip_hw_check=true to override.\n", vendor);
+	return -ENODEV;
+}
 
 /* ── Core ───────────────────────────────────────────────────────────────── */
 
@@ -59,6 +100,12 @@ static void quell_timer_callback(struct timer_list *t)
 
 static int __init surface_fixed_event_quell_init(void)
 {
+	int ret;
+
+	ret = check_surface_hardware();
+	if (ret)
+		return ret;
+
 	pr_info("surface_quell: masking ACPI SCI IRQ %u (check every %ums)\n",
 		irq_number, check_interval_ms);
 

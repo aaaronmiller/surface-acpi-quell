@@ -2,7 +2,7 @@
 
 ## Status: Active Development (v1.0.0)
 
-Current release: **5ef2332** — 5 commits, 20 files, fully functional on Surface Laptop Studio 2 (Fedora 43, kernel 6.19.8-surface).
+Current release: **1.1.0** — 5 commits, 23 files, fully functional on Surface Laptop Studio 2 (Fedora 43, kernel 6.19.8-surface).
 
 ---
 
@@ -25,18 +25,18 @@ Current release: **5ef2332** — 5 commits, 20 files, fully functional on Surfac
 | Item | Priority | Effort | Notes |
 |------|----------|--------|-------|
 | **Custom tray icon** | P0 | low | User providing mudflap silhouette; swap into icon theme |
-| **Config file** | P1 | medium | `/etc/surface-acpi-quell.conf` for IRQ threshold, GPE list, check interval |
-| **Auto-detect GPEs** | P1 | medium | Scan `/sys/firmware/acpi/interrupts/` for high-count GPEs instead of hardcoding 68-6F |
-| **Journal log rotation** | P1 | low | Ensure `99-acpi-rate-limit.conf` includes log rotation policy |
-| **Non-Surface safety** | P2 | medium | Detect hardware; warn/abort if not a Surface device to prevent IRQ 9 masking on standard hardware |
-| **Graceful degradation** | P2 | high | Monitor battery/thermal/lid after IRQ 9 mask; alert if ACPI functions are needed |
+| **Config file** | ✅ DONE | | `/etc/surface-acpi-quell.conf` for IRQ threshold, GPE list, check interval |
+| **Auto-detect GPEs** | ✅ DONE | | Scan `/sys/firmware/acpi/interrupts/` for high-count GPEs instead of hardcoding 68-6F |
+| **Journal log rotation** | ✅ DONE | | Ensure `99-acpi-rate-limit.conf` includes log rotation policy |
+| **Non-Surface safety** | ✅ DONE | | Detect hardware; warn/abort if not a Surface device to prevent IRQ 9 masking on standard hardware |
+| **Graceful degradation** | ✅ DONE | | Monitor battery/thermal/lid after IRQ 9 mask; alert if ACPI functions are needed |
 
 ## Phase 3: Distribution 📦 (Near-term)
 
 | Item | Priority | Effort | Notes |
 |------|----------|--------|-------|
-| **Fedora COPR** | P1 | medium | Build RPM for `dnf install surface-acpi-quell` |
-| **Arch AUR** | P1 | low | PKGBUILD for `yay -S surface-acpi-quell` |
+| **Fedora COPR** | ✅ SPEC DONE | | Build RPM for `dnf install surface-acpi-quell` |
+| **Arch AUR** | ✅ PKGBUILD DONE | | PKGBUILD for `yay -S surface-acpi-quell` |
 | **Ubuntu PPA** | P2 | medium | `apt-add-repository ppa:surface-acpi-quell` |
 | **openSUSE OBS** | P2 | medium | Build Service package |
 | **NixOS module** | P3 | high | Nix expression for declarative config |

@@ -13,6 +13,12 @@ set -euo pipefail
 SCRIPTPATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # ── Config ─────────────────────────────────────────────────────────────────
+
+# Source config file if it exists (overrides defaults below)
+CONFIG_FILE="/etc/surface-acpi-quell/config.conf"
+[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
 # Override these by setting env vars: SURFACE_ACPI_MODULE=...
 MODULE_NAME="${SURFACE_ACPI_MODULE:-surface_fixed_event_quell}"
 LOG_TAG="surface-acpi-quell"
@@ -82,7 +88,73 @@ check_gpes() {
 check_acpi_errors() {
     local count
     count=$(timeout 2 journalctl -k --since "30 seconds ago" --no-pager 2>/dev/null | grep -c "ACPI Error" || true)
-    [ "$count" -gt "$ACPI_ERR_THRESHOLD" ] && return 1 || return 0
+    [ "$count" -gt "${ACPI_ERR_THRESHOLD:-100}" ] && return 1 || return 0
+}
+
+# Auto-detect GPEs with high interrupt counts
+auto_detect_gpes() {
+    local gpe_dir="/sys/firmware/acpi/interrupts"
+    local rate_threshold="${GPE_AUTO_DETECT_RATE:-100}"
+    local found=0
+    
+    [ -d "$gpe_dir" ] || return 0
+    
+    # Sample once
+    local tmp_file samples1 samples2
+    tmp_file=$(mktemp)
+    
+    for f in "$gpe_dir"/gpe[0-9a-fA-F]*; do
+        local name count
+        name=$(basename "$f")
+        count=$(cat "$f" 2>/dev/null | awk '{print $1}')
+        [[ "$count" =~ ^[0-9]+$ ]] && echo "$name $count" >> "$tmp_file"
+    done
+    
+    sleep 1
+    
+    while read -r name c1; do
+        local c2 rate
+        c2=$(cat "$gpe_dir/$name" 2>/dev/null | awk '{print $1}')
+        [[ "$c2" =~ ^[0-9]+$ ]] || continue
+        rate=$(( c2 - c1 ))
+        if [ "$rate" -gt "$rate_threshold" ]; then
+            local gpe_num
+            gpe_num="${name#gpe}"
+            if ! echo "disable" > "$gpe_dir/$name" 2>/dev/null; then
+                log "Auto-detect: GPE $gpe_num rate ${rate}/sec (disable failed)"
+            else
+                log "Auto-detect: disabled GPE $gpe_num (rate ${rate}/sec)"
+                found=$((found + 1))
+            fi
+        fi
+    done < "$tmp_file"
+    
+    rm -f "$tmp_file"
+    return "$found"
+}
+
+# Graceful degradation monitoring
+check_monitor_paths() {
+    local config="${MONITOR_PATHS:-}"
+    [ -z "$config" ] && return 0
+    
+    local problems=0
+    IFS=$'
+'
+    for entry in $config; do
+        local label path max_age current now
+        label=$(echo "$entry" | cut -d: -f1)
+        path=$(echo "$entry" | cut -d: -f2)
+        max_age=$(echo "$entry" | cut -d: -f3)
+        
+        if [ -f "$path" ]; then
+            current=$(cat "$path" 2>/dev/null || echo "")
+            if [ -z "$current" ]; then
+                problems=$((problems + 1))
+            fi
+        fi
+    done
+    return "$problems"
 }
 
 # ── Repairs ────────────────────────────────────────────────────────────────
@@ -295,8 +367,10 @@ if check_module && ! check_irq9; then
     fi
 fi
 
-# 3. GPE refresh (idempotent)
+# 3. GPE refresh (idempotent) + auto-detect
 check_gpes || true
+
+auto_detect_gpes || true
 
 # 4. Journal check
 if check_module && check_irq9; then
@@ -323,7 +397,10 @@ if ! pgrep -f surface-acpi-indicator.py >/dev/null 2>&1; then
     fi
 fi
 
-# 6. Force fix mode
+# 6. Check graceful degradation
+check_monitor_paths || true
+
+# 7. Force fix mode
 if $FIX_MODE && [ "$problems" -eq 0 ]; then
     log "Force fix requested — reloading module"
     rmmod "$MODULE_NAME" 2>/dev/null || true

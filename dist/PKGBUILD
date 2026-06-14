@@ -1,0 +1,39 @@
+# Maintainer: Barnacle O'Byte <barnacle@o-byte.sea>
+# PKGBUILD for Arch Linux / AUR
+# Package: surface-acpi-quell
+
+pkgname=surface-acpi-quell
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Suppress broken ACPI interrupts on Microsoft Surface laptops"
+arch=('x86_64')
+url="https://github.com/aaaronmiller/surface-acpi-quell"
+license=('MIT')
+depends=(
+    'python'
+    'python-gobject'
+    'gtk3'
+    'libappindicator-gtk3'
+    'gnome-shell-extension-appindicator'
+)
+makedepends=('make' 'gcc' 'linux-headers')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/aaaronmiller/surface-acpi-quell/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    make
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    make DESTDIR="$pkgdir" install
+    
+    # Install config
+    install -Dm644 config/surface-acpi-quell.conf \
+        "$pkgdir/etc/surface-acpi-quell/config.conf"
+    
+    # Install packaging files
+    install -Dm644 dist/PKGBUILD \
+        "$pkgdir/usr/share/doc/surface-acpi-quell/PKGBUILD"
+}
