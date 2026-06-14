@@ -154,3 +154,16 @@ MIT. See [LICENSE](LICENSE).
 ## Author
 
 Barnacle O'Byte — a surly Irish pirate who'd rather code than plunder.
+
+---
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned features, phases, and halo goals:
+
+- **Phase 1** ✅ Foundation complete
+- **Phase 2** 🔜 Config file, auto-detect GPEs, non-Surface safety
+- **Phase 3** 📦 Distribution packages (COPR, AUR, PPA)
+- **Phase 4** 🌐 Cross-desktop (KDE, Hyprland) and cross-model (Surface Pro, Book)
+- **Phase 5** 🤖 Self-tuning and predictive alerts
+- **Phase 6** 🌟 Upstream kernel integration
