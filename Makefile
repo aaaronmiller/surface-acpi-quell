@@ -82,6 +82,20 @@ uninstall-config:
 
 # ── All-in-one ─────────────────────────────────────────────────────────────
 
+install-verify:
+	install -Dm755 surface-acpi-verify.sh $(DESTDIR)$(PREFIX)/bin/surface-acpi-verify
+	install -Dm644 surface-acpi-verify.service $(DESTDIR)$(UNITDIR)/surface-acpi-verify.service
+
+uninstall-verify:
+	$(RM) $(DESTDIR)$(PREFIX)/bin/surface-acpi-verify
+	$(RM) $(DESTDIR)$(UNITDIR)/surface-acpi-verify.service
+
+install-kernel-hook:
+	install -Dm755 99-surface-acpi-quell.install $(DESTDIR)/etc/kernel/install.d/99-surface-acpi-quell.install
+
+uninstall-kernel-hook:
+	$(RM) $(DESTDIR)/etc/kernel/install.d/99-surface-acpi-quell.install
+
 install-docs:
 	install -Dm644 README.md $(DESTDIR)$(PREFIX)/share/doc/surface-acpi-quell/README.md
 	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/doc/surface-acpi-quell/LICENSE
@@ -89,15 +103,19 @@ install-docs:
 uninstall-docs:
 	$(RM) -r $(DESTDIR)$(PREFIX)/share/doc/surface-acpi-quell
 
-install: install-module install-watcher install-indicator install-config install-docs
+install: install-module install-watcher install-indicator install-config install-docs install-verify install-kernel-hook
 	-systemctl daemon-reload 2>/dev/null; true
 	-systemctl enable --now surface-acpi-watcher.timer 2>/dev/null; true
+	-systemctl enable surface-acpi-verify.service 2>/dev/null; true
 	@echo "✅ surface-acpi-quell installed!"
 	@echo "   Reboot or: sudo modprobe surface_fixed_event_quell"
 	@echo "   Watcher running every 60s"
+	@echo "   Boot-time verification enabled"
+	@echo "   Kernel update hook installed"
 
-uninstall: uninstall-module uninstall-watcher uninstall-indicator uninstall-config uninstall-docs
+uninstall: uninstall-module uninstall-watcher uninstall-indicator uninstall-config uninstall-docs uninstall-verify uninstall-kernel-hook
 	-systemctl disable --now surface-acpi-watcher.timer 2>/dev/null; true
+	-systemctl disable surface-acpi-verify.service 2>/dev/null; true
 	-systemctl daemon-reload 2>/dev/null; true
 	@echo "🗑️  surface-acpi-quell uninstalled"
 

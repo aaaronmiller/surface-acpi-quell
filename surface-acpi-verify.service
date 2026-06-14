@@ -1,0 +1,14 @@
+[Unit]
+Description=Surface ACPI Quell — boot-time fix verification
+Documentation=file:/usr/local/share/doc/surface-acpi-quell/README.md
+DefaultDependencies=no
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/surface-acpi-verify
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target

@@ -222,7 +222,24 @@ if check_module && check_irq9; then
     fi
 fi
 
-# 5. Force fix mode
+# 5. Check tray indicator (restart if dead)
+if ! pgrep -f surface-acpi-indicator.py >/dev/null 2>&1; then
+    log "Tray indicator not running — restarting"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid surface-acpi-indicator >/dev/null 2>&1 &
+    else
+        surface-acpi-indicator >/dev/null 2>&1 &
+    fi
+    sleep 2
+    if pgrep -f surface-acpi-indicator.py >/dev/null 2>&1; then
+        all_clear "Tray indicator restarted"
+    else
+        notify "Failed to start tray indicator"
+        problems=$((problems + 1))
+    fi
+fi
+
+# 6. Force fix mode
 if $FIX_MODE && [ "$problems" -eq 0 ]; then
     log "Force fix requested — reloading module"
     rmmod "$MODULE_NAME" 2>/dev/null || true

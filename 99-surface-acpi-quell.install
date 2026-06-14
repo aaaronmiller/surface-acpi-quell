@@ -1,0 +1,46 @@
+#!/bin/bash
+# kernel-install hook: auto-rebuild surface_acpi_quell module after kernel update
+# Installed by Surface ACPI Quell Makefile
+# See: https://github.com/aaaronmiller/surface-acpi-quell
+
+COMMAND="$1"
+KERNEL_VERSION="$2"
+KERNEL_IMAGE="$3"
+
+MODULE_NAME="surface_fixed_event_quell"
+MODULE_DIR="/usr/local/src/surface-acpi-quell"
+
+case "$COMMAND" in
+    add)
+        if [ -d "$MODULE_DIR" ] && [ -f "$MODULE_DIR/Makefile" ]; then
+            echo "surface-acpi-quell: rebuilding module for kernel $KERNEL_VERSION"
+            cd "$MODULE_DIR" || exit 0
+            make clean 2>/dev/null
+            if make -j"$(nproc)" 2>/dev/null; then
+                # Install to the new kernel's module tree (not $(uname -r))
+                MODULE_DEST="/lib/modules/$KERNEL_VERSION/extra/${MODULE_NAME}.ko"
+                mkdir -p "$(dirname "$MODULE_DEST")"
+                cp "${MODULE_NAME}.ko" "$MODULE_DEST"
+                chmod 644 "$MODULE_DEST"
+                depmod -a "$KERNEL_VERSION"
+
+                # Also copy to watcher fallback location
+                LIB_DEST="/usr/local/lib/surface-acpi-quell/${MODULE_NAME}.ko"
+                mkdir -p "$(dirname "$LIB_DEST")"
+                cp "${MODULE_NAME}.ko" "$LIB_DEST"
+
+                echo "surface-acpi-quell: module rebuilt for $KERNEL_VERSION"
+            else
+                echo "surface-acpi-quell: BUILD FAILED for $KERNEL_VERSION" >&2
+            fi
+        else
+            echo "surface-acpi-quell: source not at $MODULE_DIR; skip auto-rebuild" >&2
+        fi
+        ;;
+    remove)
+        rm -f "/lib/modules/$KERNEL_VERSION/extra/${MODULE_NAME}.ko"
+        rm -f "/usr/local/lib/surface-acpi-quell/${MODULE_NAME}.ko"
+        rmdir "/lib/modules/$KERNEL_VERSION/extra" 2>/dev/null || true
+        rmdir "/usr/local/lib/surface-acpi-quell" 2>/dev/null || true
+        ;;
+esac
