@@ -42,6 +42,19 @@ ICONS = {
 
 OK, WARNING, CRITICAL, UNKNOWN = range(4)
 
+# ── Rogue watcher status file (written by rogue-watcher.sh) ───────────
+ROGUE_STATUS_FILE = "/tmp/rogue-watcher.json"
+
+import json
+
+def read_rogue_status():
+    """Return dict from rogue-watcher status file, or None."""
+    try:
+        with open(ROGUE_STATUS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
 # ── State ──────────────────────────────────────────────────────────────────
 
 class State:
@@ -53,6 +66,7 @@ class State:
         self.last_check = "never"
         self.details = []
         self.message = "Starting…"
+        self.rogue = None         # rogue-watcher status dict
 
 
 # ── Checks ─────────────────────────────────────────────────────────────────
@@ -159,6 +173,20 @@ def check_all(state):
     lr = watcher_last_run()
     d.append(f"Watcher: {tw} (last: {lr})")
     d.append(f"Updated: {state.last_check}")
+
+    # Rogue process status
+    rogue = read_rogue_status()
+    state.rogue = rogue
+    if rogue:
+        n = rogue.get('tracked', 0)
+        a = rogue.get('alerts_5m', 0)
+        if a > 0:
+            d.append(f"🦜 ROGUES: {a} alerts in 5m, tracking {n} procs")
+        else:
+            d.append(f"🦜 No rogues — tracking {n} procs")
+    else:
+        d.append("🦜 Rogue watcher: not running")
+
     state.details = d
 
     # Overall status

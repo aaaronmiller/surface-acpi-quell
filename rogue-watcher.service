@@ -1,0 +1,14 @@
+[Unit]
+Description=Rogue Process Watcher — detects stuck/orphaned processes via fingerprint comparison
+Documentation=file:%h/code/surface-fixed-event-quell/rogue-watcher.sh
+PartOf=surface-acpi-watcher.service
+
+[Service]
+ExecStart=%h/code/surface-fixed-event-quell/rogue-watcher.sh --foreground --interval 30 --cycles 10 --min-age 30
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitInterval=10
+
+[Install]
+WantedBy=default.target
