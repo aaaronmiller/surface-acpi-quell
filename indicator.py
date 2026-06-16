@@ -59,6 +59,7 @@ def read_rogue_status():
 
 class State:
     def __init__(self):
+        self.lock = threading.Lock()
         self.status = UNKNOWN
         self.module_loaded = False
         self.irq9_rate = 0
@@ -66,6 +67,18 @@ class State:
         self.last_check = "never"
         self.details = []
         self.message = "Starting…"
+
+    def update(self, **kwargs):
+        with self.lock:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    def snapshot(self):
+        with self.lock:
+            return {k: getattr(self, k) for k in [
+                "status", "module_loaded", "irq9_rate", "acpi_errors_1m",
+                "last_check", "details", "message"
+            ]}
         self.rogue = None         # rogue-watcher status dict
 
 
@@ -136,6 +149,14 @@ def watcher_last_run():
 
 
 def check_all(state):
+    # First-run guard: if no state file exists yet, show a placeholder
+    if not os.path.isfile("/var/lib/surface-acpi-quell/state.json"):
+        state.update(status=UNKNOWN, message="No data yet — watcher hasn't run",
+                     details=["Watcher hasn't recorded state yet",
+                              "The systemd timer runs every 60s",
+                              "Wait a moment and check again"],
+                     last_check=time.strftime("%H:%M:%S"))
+        return
     state.module_loaded = module_loaded()
 
     c1 = read_irq9_sum()
@@ -187,30 +208,29 @@ def check_all(state):
     else:
         d.append("🦜 Rogue watcher: not running")
 
-    state.details = d
+    state.update(details=list(d))
 
     # Overall status
-    if not state.module_loaded:
-        state.status = CRITICAL
-        state.message = "ACPI fix module NOT loaded — storm may return!"
-    elif state.irq9_rate > 500 or state.acpi_errors_1m > 100:
-        state.status = CRITICAL
-        state.message = (
-            f"ACPI storm ACTIVE! IRQ9+{state.irq9_rate}/s, "
-            f"{state.acpi_errors_1m} errs/min")
-    elif state.irq9_rate > 50 or state.acpi_errors_1m > 10:
-        state.status = WARNING
-        state.message = "ACPI fix degraded — investigate soon"
+    s = state.snapshot()
+    if not s["module_loaded"]:
+        state.update(status=CRITICAL,
+                     message="ACPI fix module NOT loaded — storm may return!")
+    elif s["irq9_rate"] > 500 or s["acpi_errors_1m"] > 100:
+        state.update(status=CRITICAL,
+                     message=f"ACPI storm ACTIVE! IRQ9+{s['irq9_rate']}/s, {s['acpi_errors_1m']} errs/min")
+    elif s["irq9_rate"] > 50 or s["acpi_errors_1m"] > 10:
+        state.update(status=WARNING,
+                     message="ACPI fix degraded — investigate soon")
     else:
-        state.status = OK
-        state.message = "ACPI storm suppressed ✓"
+        state.update(status=OK,
+                     message="ACPI storm suppressed ✓")
 
 
 # ── Actions ────────────────────────────────────────────────────────────────
 
 def run_watcher_fix():
     subprocess.Popen(
-        ["pkexec", "surface-acpi-watcher", "--fix"],
+        ["pkexec", "/usr/local/bin/surface-acpi-watcher", "--fix"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -250,14 +270,14 @@ def open_report():
     """Generate and show the status report."""
     try:
         result = subprocess.run(
-            ["surface-acpi-watcher", "--report"],
+            ["/usr/local/bin/surface-acpi-watcher", "--report"],
             capture_output=True, text=True, timeout=10)
         report = result.stdout
     except Exception:
         report = "Failed to generate report"
     # Show in a dialog
     dialog = Gtk.Dialog(title="Surface ACPI Quell — Status Report",
-                         transient_for=None, flags=0)
+                         transient_for=None, flags=Gtk.DialogFlags.MODAL)
     dialog.add_buttons(Gtk.STOCK_OK, Gtk.ResponseType.OK)
     dialog.set_default_size(500, 400)
     scrolled = Gtk.ScrolledWindow()
@@ -342,6 +362,13 @@ indicator = None
 
 def set_icon():
     icon = ICONS.get(state.status, ICONS[UNKNOWN])
+    # Try our custom icon; fall back to standard status icons if not found
+    theme = Gtk.IconTheme.get_default()
+    info = theme.lookup_icon(icon, 22, 0)
+    if not info:
+        fallback = {OK: "face-smile-symbolic", WARNING: "face-worried-symbolic",
+                    CRITICAL: "dialog-error-symbolic", UNKNOWN: "dialog-question-symbolic"}
+        icon = fallback.get(state.status, fallback[UNKNOWN])
     indicator.set_icon_full(icon, state.message)
 
 

@@ -16,7 +16,7 @@ SCRIPTPATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # Source config file if it exists (overrides defaults below)
 CONFIG_FILE="/etc/surface-acpi-quell/config.conf"
-[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE" 2>/dev/null || true
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 # Override these by setting env vars: SURFACE_ACPI_MODULE=...

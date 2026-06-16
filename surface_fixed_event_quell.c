@@ -23,19 +23,19 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Surface ACPI Quell — suppress broken ACPI SCI interrupts");
 MODULE_AUTHOR("Barnacle O'Byte");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("1.2.0");
 
 /* ── Parameters ─────────────────────────────────────────────────────────── */
 
 static unsigned int irq_number = 9;
 module_param(irq_number, uint, 0444);
 MODULE_PARM_DESC(irq_number,
-	"ACPI SCI IRQ number (default: 9)");
+	"ACPI SCI IRQ number (default: 9, must be > 0)");
 
 static unsigned int check_interval_ms = 10000;
 module_param(check_interval_ms, uint, 0444);
 MODULE_PARM_DESC(check_interval_ms,
-	"Interval in ms between re-mask attempts (default: 10000)");
+	"Interval in ms between re-mask attempts (default: 10000, min: 10)");
 
 static bool skip_hw_check = false;
 module_param(skip_hw_check, bool, 0444);
@@ -45,6 +45,7 @@ MODULE_PARM_DESC(skip_hw_check,
 /* ── State ──────────────────────────────────────────────────────────────── */
 
 static struct timer_list quell_timer;
+static bool timer_active;	/* protected by timer callback serialization */
 
 /* ── Safety: verify we're on Surface hardware ───────────────────────────────
  *
@@ -81,19 +82,37 @@ static int check_surface_hardware(void)
 	return -ENODEV;
 }
 
-/* ── Core ───────────────────────────────────────────────────────────────── */
+/* ── Core ─────────────────────────────────────────────────────────────────
+ *
+ * disable_irq_nosync() is used instead of disable_irq() because the
+ * quell_timer_callback runs in softirq context where sleeping is not
+ * allowed. disable_irq() might sleep waiting for handlers to complete.
+ * Since the mask is a best-effort operation (the firmware may re-enable
+ * the interrupt between checks anyway), nosync is sufficient.
+ */
 
 static void mask_acpi_sci(void)
 {
-	disable_irq(irq_number);
+	disable_irq_nosync(irq_number);
 	pr_debug("surface_quell: masked IRQ %u\n", irq_number);
 }
 
 static void quell_timer_callback(struct timer_list *t)
 {
+	if (!READ_ONCE(timer_active))
+		return;
+
 	mask_acpi_sci();
-	mod_timer(&quell_timer,
-		  jiffies + msecs_to_jiffies(check_interval_ms));
+
+	/* Re-arm only if the module is still active. The flag is cleared
+	 * before timer_delete_sync() in the exit path, so this race-free:
+	 * either the callback sees timer_active == true and re-arms, or
+	 * it sees false and skips re-arm. In the latter case the exit
+	 * path's timer_delete_sync() finds no pending timer.
+	 */
+	if (READ_ONCE(timer_active))
+		mod_timer(&quell_timer,
+			  jiffies + msecs_to_jiffies(check_interval_ms));
 }
 
 /* ── Init / Exit ────────────────────────────────────────────────────────── */
@@ -101,6 +120,16 @@ static void quell_timer_callback(struct timer_list *t)
 static int __init surface_fixed_event_quell_init(void)
 {
 	int ret;
+
+	if (irq_number == 0) {
+		pr_err("surface_quell: irq_number must be > 0\n");
+		return -EINVAL;
+	}
+	if (check_interval_ms < 10) {
+		pr_warn("surface_quell: check_interval_ms %u too low, using 10\n",
+			check_interval_ms);
+		check_interval_ms = 10;
+	}
 
 	ret = check_surface_hardware();
 	if (ret)
@@ -112,6 +141,7 @@ static int __init surface_fixed_event_quell_init(void)
 	mask_acpi_sci();
 
 	timer_setup(&quell_timer, quell_timer_callback, 0);
+	timer_active = true;
 	mod_timer(&quell_timer,
 		  jiffies + msecs_to_jiffies(check_interval_ms));
 
@@ -120,6 +150,11 @@ static int __init surface_fixed_event_quell_init(void)
 
 static void __exit surface_fixed_event_quell_exit(void)
 {
+	/* Prevent re-arm: the callback checks this flag, and mod_timer
+	 * won't be called once it's cleared. After timer_delete_sync()
+	 * returns, no callback is running and no new timer is queued.
+	 */
+	WRITE_ONCE(timer_active, false);
 	timer_delete_sync(&quell_timer);
 	enable_irq(irq_number);
 	pr_info("surface_quell: unmasked ACPI SCI IRQ %u\n", irq_number);
