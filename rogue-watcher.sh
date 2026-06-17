@@ -22,7 +22,7 @@ MIN_AGE=30
 DRY_RUN=false
 FOREGROUND=false
 ONESHOT=false
-STATUS_FILE="/tmp/rogue-watcher.json"
+STATUS_FILE="/var/lib/surface-acpi-quell/rogue-status.json"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -118,6 +118,11 @@ snapshot() {
 
         echo "${pid}|${sec}|${state}|${rss:-0}|${pcpu:-0}|${comm:-?}|${disk_w}|${tty:-?}|${ppid:-0}"
     done
+    # Zombie detection pass — catch processes in Z state directly
+    while IFS=' ' read -r zpid zstat zcomm zppid; do
+        [ -z "$zpid" ] && continue
+        echo "${zpid}|0|Z|0|0|${zcomm}|0|?|${zppid}"
+    done < <(ps --no-header -eo pid:1,state:1,comm:1,ppid:1 2>/dev/null | awk '$2 == "Z" || $2 ~ /^Z/')
 }
 
 # ---- fingerprint: quantised resource profile --------------------------------
@@ -165,6 +170,10 @@ while true; do
                     ppid_comm=$(cat /proc/$ppid/comm 2>/dev/null || echo "?")
 
                     msg="PID ${pid} (${comm}) — no TTY, PPID=${ppid} (${ppid_comm}), unchanged ${new_cycle} cycles, running ${age_min}m${disk_w_mb:+, ${disk_w_mb}MB written} — likely stuck/orphaned"
+                    # Zombie-specific alert
+                    if [ "$state" = "Z" ]; then
+                        msg="ZOMBIE PID ${pid} (${comm}) — parent PPID=${ppid} (${ppid_comm}), not reaped — zombie/stuck process"
+                    fi
                     NOTIFY "$msg"
                     snap_window["$pid"]="0|${fp}|${tty}|${ppid}"
                 fi
@@ -185,7 +194,7 @@ while true; do
     done
 
     # Write status JSON for tray indicator
-    _alert_count=$(journalctl --user -u rogue-detector.service --since "5 minutes ago" --no-pager 2>/dev/null | grep -c "ALERT" || true)
+    _alert_count=$(journalctl -u rogue-detector.service --since "5 minutes ago" --no-pager 2>/dev/null | grep -c "ALERT" || true)
     printf '{"cycle":%d,"tracked":%d,"timestamp":%d,"alerts_5m":%s}\n' \
       "$CURRENT_CYCLE" \
       "${#snap_window[@]}" \
