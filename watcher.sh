@@ -450,8 +450,9 @@ if [ -d "$DATA_DIR" ]; then
     # Keep last 2000 lines (ring buffer)
     tail -n 2000 "$DATA_FILE" > "${DATA_FILE}.tmp" && mv "${DATA_FILE}.tmp" "$DATA_FILE"
     
-    # Update JSON state file
-    cat > "$STATE_FILE" << JSONEOF
+    # Update JSON state file (atomic write: temp then rename)
+    STATE_TMP="${STATE_FILE}.tmp"
+    cat > "$STATE_TMP" << JSONEOF
 {
   "timestamp": $(date +%s),
   "irq9_count": ${IRQ_NOW},
@@ -463,6 +464,7 @@ if [ -d "$DATA_DIR" ]; then
   "uptime_seconds": $(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || echo 0)
 }
 JSONEOF
+    mv -f "$STATE_TMP" "$STATE_FILE" 2>/dev/null || true
 fi
 
 exit "$problems"
