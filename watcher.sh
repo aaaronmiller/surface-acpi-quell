@@ -276,10 +276,10 @@ do_short_status() {
     err="?"
     upt="?"
     if [ -f "$state_file" ]; then
-        mod=$(grep -o '"module_loaded": [01]' "$state_file" | cut -d' ' -f2)
-        irq=$(grep -o '"irq9_count": [0-9\-]*' "$state_file" | cut -d' ' -f2)
-        err=$(grep -o '"acpi_errors_1m": [0-9\-]*' "$state_file" | cut -d' ' -f2)
-        upt=$(grep -o '"uptime_seconds": [0-9]*' "$state_file" | cut -d' ' -f2)
+        mod=$(grep -o '"module_loaded": *[01]' "$state_file" | grep -o '[01]$')
+        irq=$(grep -o '"irq9_count": *[0-9\-]*' "$state_file" | grep -o '[0-9\-]*$')
+        err=$(grep -o '"acpi_errors_1m": *[0-9\-]*' "$state_file" | grep -o '[0-9\-]*$')
+        upt=$(grep -o '"uptime_seconds": *[0-9]*' "$state_file" | grep -o '[0-9]*$')
     fi
     # Fallback uptime
     [ "$upt" = "0" ] || [ -z "$upt" ] && upt=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
@@ -411,6 +411,7 @@ for arg in "$@"; do
         --verbose|-v) VERBOSE=true ;;
         --fix|-f)     FIX_MODE=true ;;
         --status|-s)  print_status; exit 0 ;;
+        --short-status)  do_short_status; exit 0 ;;
         --report|-r)  do_report; exit 0 ;;
         --help|-h)
             echo "Usage: $0 [--verbose|--fix|--status|--help]"
