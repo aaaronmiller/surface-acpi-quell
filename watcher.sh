@@ -402,6 +402,43 @@ do_report() {
 }
 
 
+# ── Health Check (exit 0 = OK, exit 1 = problem) ─────────────────────
+
+do_health() {
+    local issues=0
+    if [ "$(lsmod | grep -c surface_fixed_event_quell || true)" -eq 0 ]; then
+        echo "FAIL: module not loaded" >&2
+        issues=$((issues + 1))
+    fi
+    local c1 c2
+    c1=$(awk '''/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}''' /proc/interrupts 2>/dev/null || echo 0)
+    sleep 1
+    c2=$(awk '''/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}''' /proc/interrupts 2>/dev/null || echo 0)
+    local delta=$(( c2 - c1 ))
+    if [ "$delta" -gt 500 ] 2>/dev/null; then
+        echo "FAIL: IRQ 9 rising (+${delta}/sec)" >&2
+        issues=$((issues + 1))
+    fi
+    local errs
+    errs=$(timeout 2 journalctl -k --since "30 seconds ago" --no-pager 2>/dev/null | grep -c "ACPI Error" || true)
+    if [ "$errs" -gt 100 ]; then
+        echo "FAIL: ${errs} ACPI errors/min" >&2
+        issues=$((issues + 1))
+    fi
+    if [ ! -f /etc/systemd/journald.conf.d/99-acpi-rate-limit.conf ]; then
+        echo "WARN: journal rate limit not configured" >&2
+    fi
+    if ! systemctl is-active surface-acpi-watcher.timer >/dev/null 2>&1; then
+        echo "FAIL: watcher timer not active" >&2
+        issues=$((issues + 1))
+    fi
+    if [ "$issues" -gt 0 ]; then
+        exit 1
+    fi
+    echo "OK"
+    exit 0
+}
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 problems=0
@@ -412,6 +449,7 @@ for arg in "$@"; do
         --fix|-f)     FIX_MODE=true ;;
         --status|-s)  print_status; exit 0 ;;
         --short-status)  do_short_status; exit 0 ;;
+        --health)  do_health; exit 0 ;;
         --report|-r)  do_report; exit 0 ;;
         --help|-h)
             echo "Usage: $0 [--verbose|--fix|--status|--help]"
@@ -523,3 +561,7 @@ JSONEOF
 fi
 
 exit "$problems"
+
+
+# Find the case block and add --health
+# We'll do this with sed after writing

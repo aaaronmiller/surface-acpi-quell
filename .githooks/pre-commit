@@ -1,0 +1,33 @@
+#!/bin/bash
+# Pre-commit hook: syntax checks before commit
+# Install: git config core.hooksPath .githooks
+set -euo pipefail
+
+FAILED=0
+echo "▸ Pre-commit checks..."
+
+# Shellcheck watcher
+if command -v shellcheck &>/dev/null; then
+    shellcheck watcher.sh && echo "  ✅ watcher.sh (shellcheck)" || { echo "  ❌ watcher.sh"; FAILED=1; }
+else
+    # Fallback: bash syntax check
+    bash -n watcher.sh && echo "  ✅ watcher.sh (syntax)" || { echo "  ❌ watcher.sh"; FAILED=1; }
+fi
+
+# Python syntax
+for py in indicator.py metrics/surface-acpi-metrics.py; do
+    if [ -f "$py" ]; then
+        python3 -c "compile(open('$py').read(), '$py', 'exec')" && \
+            echo "  ✅ $py" || { echo "  ❌ $py"; FAILED=1; }
+    fi
+done
+
+# Kernel module builds
+if [ -f Makefile ] && [ -f surface_fixed_event_quell.c ]; then
+    make clean 2>/dev/null
+    make 2>/dev/null && echo "  ✅ kernel module" || { echo "  ❌ kernel module"; FAILED=1; }
+    make clean 2>/dev/null
+fi
+
+[ "$FAILED" -eq 0 ] && echo "▸ All checks passed." || echo "▸ $FAILED check(s) failed."
+exit "$FAILED"

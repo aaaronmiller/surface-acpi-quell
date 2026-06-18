@@ -1,0 +1,14 @@
+name: syntax-check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck
+        run: |
+          shellcheck watcher.sh || true
+      - name: Python syntax
+        run: |
+          python3 -c "compile(open('indicator.py').read(), 'indicator.py', 'exec')" || exit 1
+          python3 -c "compile(open('metrics/surface-acpi-metrics.py').read(), 'metrics/surface-acpi-metrics.py', 'exec')" || exit 1
