@@ -18,6 +18,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -42,10 +43,12 @@ ICONS = {
 
 OK, WARNING, CRITICAL, UNKNOWN = range(4)
 
-# ── Rogue watcher status file (written by rogue-watcher.sh) ───────────
+# ── Sound diagnosis log directory ──────────────────────────────────────────
+SOUND_LOG_DIR = os.path.expanduser("~/surface-sound-logs")
+
+# ── Rogue watcher status file (written by rogue-watcher.sh) ────────────────
 ROGUE_STATUS_FILE = "/tmp/rogue-watcher.json"
 
-import json
 
 def read_rogue_status():
     """Return dict from rogue-watcher status file, or None."""
@@ -54,6 +57,7 @@ def read_rogue_status():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
 
 # ── State ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +71,7 @@ class State:
         self.last_check = "never"
         self.details = []
         self.message = "Starting…"
+        self.rogue = None
 
     def update(self, **kwargs):
         with self.lock:
@@ -77,9 +82,8 @@ class State:
         with self.lock:
             return {k: getattr(self, k) for k in [
                 "status", "module_loaded", "irq9_rate", "acpi_errors_1m",
-                "last_check", "details", "message"
+                "last_check", "details", "message", "rogue"
             ]}
-        self.rogue = None         # rogue-watcher status dict
 
 
 # ── Checks ─────────────────────────────────────────────────────────────────
@@ -294,6 +298,277 @@ def open_report():
     dialog.destroy()
 
 
+def cycle_extensions():
+    """Cycle all GNOME Shell extensions to reset the audio context.
+
+    This is the known workaround for the periodic ~8-10s sound bug on
+    Surface Laptop Studio 2: disabling all extensions and re-enabling
+    them clears the stuck libcanberra event loop in gnome-shell.
+    """
+    def _run():
+        try:
+            subprocess.run(
+                ["bash", "-c", (
+                    r'exts=$(gnome-extensions list --enabled); '
+                    r'echo "$exts" | while read ext; do '
+                    r'  gnome-extensions disable "$ext"; '
+                    r'done; '
+                    r'sleep 1; '
+                    r'echo "$exts" | while read ext; do '
+                    r'  gnome-extensions enable "$ext"; '
+                    r'done'
+                )],
+                capture_output=True, text=True, timeout=30
+            )
+            subprocess.Popen(
+                ["notify-send", "-u", "normal",
+                 "🔁 GNOME Extensions",
+                 "Extensions cycled — audio context reset"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical",
+                 "🔁 GNOME Extensions",
+                 f"Failed to cycle extensions: {e}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def capture_system_snapshot(event_type):
+    """Capture a comprehensive system snapshot to a timestamped log file.
+
+    event_type: 'sound' (when the bug sound IS playing) or
+                'nosound' (when it's absent). Comparing the two
+                across multiple captures may reveal the trigger.
+    """
+    os.makedirs(SOUND_LOG_DIR, exist_ok=True)
+    timestamp = time.strftime("%Y-%m-%d_%H%M%S")
+    filename = f"{event_type}-{timestamp}.log"
+    filepath = os.path.join(SOUND_LOG_DIR, filename)
+
+    def _run():
+        lines = []
+        lines.append("=" * 72)
+        lines.append("  Surface Sound Diagnosis Log")
+        lines.append(f"  Event type: {event_type.upper()}")
+        lines.append(f"  Timestamp:  {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        lines.append(f"  Hostname:   {os.uname().nodename}")
+        lines.append(f"  Kernel:     {os.uname().release}")
+        lines.append(f"  Desktop:    {os.environ.get('XDG_SESSION_DESKTOP', '?')}")
+        lines.append(f"  Session:    {os.environ.get('XDG_SESSION_TYPE', '?')}")
+        lines.append(f"  Uptime:     {open('/proc/uptime').read().split()[0]}s")
+        lines.append("=" * 72)
+        lines.append("")
+
+        def run_cmd(cmd, label=None, timeout=15):
+            hdr = label or (cmd[0] if isinstance(cmd, list) else cmd)
+            lines.append(f"── {hdr} ──")
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=timeout)
+                out = (r.stdout or "").strip()
+                err = (r.stderr or "").strip()
+                if out:
+                    lines.append(out)
+                if err:
+                    lines.append(f"[stderr] {err}")
+            except Exception as e:
+                lines.append(f"[error] {e}")
+            lines.append("")
+            return out
+
+        # 1. Running processes (sorted by CPU)
+        run_cmd(["ps", "aux", "--sort=-%cpu"],
+                "Running processes (top 60 by CPU)")
+
+        # 2. Audio state
+        run_cmd(["pactl", "info"], "PipeWire/PulseAudio info")
+        run_cmd(["pactl", "list", "sinks"], "Audio sinks")
+        run_cmd(["pactl", "list", "sink-inputs"], "Active sink inputs")
+        run_cmd(["pw-cli", "list-objects", "Node"],
+                "PipeWire nodes", timeout=10)
+
+        # 3. GNOME extensions
+        run_cmd(["gnome-extensions", "list", "--enabled"],
+                "Enabled GNOME extensions")
+
+        # 4. ACPI / IRQ / dmesg
+        run_cmd(["cat", "/proc/interrupts"], "Interrupts", timeout=5)
+        run_cmd(["journalctl", "-k", "--since=5 minutes ago", "--no-pager"],
+                "Kernel messages (last 5 min)", timeout=10)
+
+        # 5. System load
+        run_cmd(["cat", "/proc/loadavg"], "Load average", timeout=5)
+        run_cmd(["free", "-h"], "Memory", timeout=5)
+        run_cmd(["uptime"], "Uptime", timeout=5)
+
+        # 6. D-Bus services
+        run_cmd(["busctl", "list", "--no-legend"],
+                "D-Bus services", timeout=10)
+
+        # 7. ACPI module & GPEs
+        run_cmd(["bash", "-c", "lsmod | grep surface"],
+                "Surface modules", timeout=5)
+        run_cmd(["ls", "-la", "/sys/firmware/acpi/interrupts/"],
+                "ACPI GPE directory", timeout=5)
+
+        # 8. Audio power management
+        for p in [
+            "/sys/module/snd_hda_intel/parameters/power_save",
+            "/sys/module/snd_hda_intel/parameters/power_save_controller",
+        ]:
+            v = open(p).read().strip() if os.path.isfile(p) else "N/A"
+            lines.append(f"{p}: {v}")
+        lines.append("")
+
+        # 9. Sound-using processes (lsof on /dev/snd)
+        run_cmd(["lsof", "/dev/snd/"],
+                "Processes with audio devices open", timeout=10)
+
+        # 10. ACPI watcher state
+        run_cmd(["cat", "/var/lib/surface-acpi-quell/state.json"],
+                "Surface ACPI quell state", timeout=5)
+
+        # 11. List all systemd user timers
+        run_cmd(["systemctl", "--user", "list-timers", "--all"],
+                "User timers", timeout=10)
+
+        # 12. Audio timer info
+        run_cmd(["systemctl", "--user", "status", "gnome-audio-reset.timer",
+                 "--no-pager"],
+                "Audio reset timer status", timeout=5)
+        run_cmd(["systemctl", "--user", "status", "gnome-audio-reset.service",
+                 "--no-pager"],
+                "Audio reset service status", timeout=5)
+
+        lines.append("=" * 72)
+        lines.append(f"  End of {event_type.upper()} event snapshot")
+        lines.append(f"  {filepath}")
+        lines.append("=" * 72)
+        lines.append("")
+
+        # Write atomically: temp file then rename
+        tmp_path = filepath + ".tmp"
+        try:
+            with open(tmp_path, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            os.rename(tmp_path, filepath)
+            subprocess.Popen(
+                ["notify-send", "-u", "normal",
+                 "📝 Sound Diagnosis",
+                 f"{event_type.upper()} event logged to\n{filepath}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical",
+                 "📝 Sound Diagnosis",
+                 f"Failed to write log: {e}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def capture_sound_event():
+    """Log system snapshot when the periodic sound IS playing."""
+    capture_system_snapshot("sound")
+
+
+def capture_nosound_event():
+    """Log system snapshot when the sound is NOT playing."""
+    capture_system_snapshot("nosound")
+
+
+def open_sound_logs_dir():
+    """Open the sound diagnosis log directory in the file manager."""
+    os.makedirs(SOUND_LOG_DIR, exist_ok=True)
+    subprocess.Popen(["xdg-open", SOUND_LOG_DIR])
+
+
+def reset_bluetooth():
+    """Reset Bluetooth by toggling rfkill — workaround for BT devices
+    that don't auto-connect after switching from another machine."""
+    def _run():
+        try:
+            subprocess.run(["rfkill", "block", "bluetooth"],
+                           capture_output=True, timeout=10)
+            time.sleep(2)
+            subprocess.run(["rfkill", "unblock", "bluetooth"],
+                           capture_output=True, timeout=10)
+            time.sleep(2)
+            subprocess.Popen(
+                ["notify-send", "-u", "normal",
+                 "🔁 Bluetooth Reset",
+                 "Bluetooth toggled off/on — devices should reconnect"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical",
+                 "🔁 Bluetooth Reset",
+                 f"Failed: {e}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _unload_acpi_module():
+    """Unload the ACPI quell kernel module safely."""
+    subprocess.run(
+        ["pkexec", "rmmod", "surface_fixed_event_quell"],
+        capture_output=True, timeout=15)
+
+
+def safe_shutdown():
+    """Unload the ACPI quell module first, then power off.
+    The module masks IRQ 9 (ACPI SCI) which prevents ACPI power-off
+    events from being delivered. Unloading it first ensures a clean
+    shutdown."""
+    def _run():
+        _unload_acpi_module()
+        time.sleep(1)
+        subprocess.run(["systemctl", "poweroff"], timeout=30)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def safe_reboot():
+    """Unload the ACPI quell module first, then reboot."""
+    def _run():
+        _unload_acpi_module()
+        time.sleep(1)
+        subprocess.run(["systemctl", "reboot"], timeout=30)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def module_is_loaded():
+    """Check if the ACPI quell kernel module is loaded."""
+    try:
+        r = subprocess.run(["lsmod"], capture_output=True,
+                           text=True, timeout=5)
+        return "surface_fixed_event_quell" in r.stdout
+    except Exception:
+        return False
+
+
+def toggle_module():
+    """Toggle the ACPI quell kernel module on or off."""
+    def _run():
+        if module_is_loaded():
+            _unload_acpi_module()
+            subprocess.Popen(
+                ["notify-send", "-u", "normal",
+                 "↕️ ACPI Quell Module",
+                 "Module unloaded — IRQ 9 re-enabled, ACPI events active"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(
+                ["pkexec", "modprobe", "surface_fixed_event_quell"],
+                capture_output=True, timeout=15)
+            subprocess.Popen(
+                ["notify-send", "-u", "normal",
+                 "↕️ ACPI Quell Module",
+                 "Module loaded — ACPI SCI IRQ9 masked"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def open_log():
     term = (shutil.which("gnome-terminal") or shutil.which("kgx")
             or "xterm")
@@ -334,6 +609,32 @@ def build_menu(state):
         ("🔨 Rebuild Module", lambda w: rebuild_module()),
     ]
     for label, cb in actions:
+        item = Gtk.MenuItem(label=label)
+        item.connect("activate", cb)
+        menu.append(item)
+
+    # ── Audio bug tools ─────────────────────────────────────────────────
+    menu.append(Gtk.SeparatorMenuItem())
+    audio_items = [
+        ("🔁 Cycle Extensions (fix sound)", lambda w: cycle_extensions()),
+        ("🔊 Log SOUND event", lambda w: capture_sound_event()),
+        ("🔇 Log NO-SOUND event", lambda w: capture_nosound_event()),
+        ("📂 Open logs folder", lambda w: open_sound_logs_dir()),
+    ]
+    for label, cb in audio_items:
+        item = Gtk.MenuItem(label=label)
+        item.connect("activate", cb)
+        menu.append(item)
+
+    # ── Bluetooth / Shutdown remediation ────────────────────────────────
+    menu.append(Gtk.SeparatorMenuItem())
+    sys_items = [
+        ("🔁 Reset Bluetooth", lambda w: reset_bluetooth()),
+        ("↕️ Toggle ACPI Module", lambda w: toggle_module()),
+        ("🛑 Safe Shutdown", lambda w: safe_shutdown()),
+        ("🔄 Safe Reboot", lambda w: safe_reboot()),
+    ]
+    for label, cb in sys_items:
         item = Gtk.MenuItem(label=label)
         item.connect("activate", cb)
         menu.append(item)

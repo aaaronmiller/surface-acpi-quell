@@ -17,13 +17,14 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/reboot.h>
 #include <linux/acpi.h>
 #include <linux/dmi.h>
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Surface ACPI Quell — suppress broken ACPI SCI interrupts");
 MODULE_AUTHOR("Barnacle O'Byte");
-MODULE_VERSION("1.2.0");
+MODULE_VERSION("1.3.0");
 
 /* ── Parameters ─────────────────────────────────────────────────────────── */
 
@@ -46,6 +47,31 @@ MODULE_PARM_DESC(skip_hw_check,
 
 static struct timer_list quell_timer;
 static bool timer_active;	/* protected by timer callback serialization */
+
+/* ── Reboot / shutdown notifier ────────────────────────────────────────
+ *
+ * IRQ 9 (ACPI SCI) must be re-enabled before the final power-off sequence
+ * begins. Without this, the ACPI power-off event can't be delivered and the
+ * system hangs with screen off but fans running (Surface Laptop Studio 2).
+ *
+ * This notifier runs at INT_MAX priority (earliest possible) so the IRQ is
+ * unmasked before even the device shutdown callbacks are invoked.
+ */
+static int quell_reboot_notifier(struct notifier_block *nb,
+				 unsigned long action, void *data)
+{
+	WRITE_ONCE(timer_active, false);
+	timer_delete_sync(&quell_timer);
+	enable_irq(irq_number);
+	pr_info("surface_quell: unmasked IRQ %u for shutdown/reboot\n",
+		irq_number);
+	return NOTIFY_OK;
+}
+
+static struct notifier_block quell_reboot_nb = {
+	.notifier_call = quell_reboot_notifier,
+	.priority = INT_MAX,
+};
 
 /* ── Safety: verify we're on Surface hardware ───────────────────────────────
  *
@@ -145,6 +171,9 @@ static int __init surface_fixed_event_quell_init(void)
 	mod_timer(&quell_timer,
 		  jiffies + msecs_to_jiffies(check_interval_ms));
 
+	register_reboot_notifier(&quell_reboot_nb);
+	pr_debug("surface_quell: registered reboot notifier\n");
+
 	return 0;
 }
 
@@ -156,6 +185,7 @@ static void __exit surface_fixed_event_quell_exit(void)
 	 */
 	WRITE_ONCE(timer_active, false);
 	timer_delete_sync(&quell_timer);
+	unregister_reboot_notifier(&quell_reboot_nb);
 	enable_irq(irq_number);
 	pr_info("surface_quell: unmasked ACPI SCI IRQ %u\n", irq_number);
 }
