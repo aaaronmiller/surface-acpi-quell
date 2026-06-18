@@ -8,6 +8,10 @@ Type=oneshot
 ExecStart=/usr/local/bin/surface-acpi-watcher
 StandardOutput=journal
 StandardError=journal
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_MODULE
 
 [Install]
 WantedBy=multi-user.target

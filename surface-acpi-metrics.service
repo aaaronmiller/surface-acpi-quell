@@ -1,0 +1,17 @@
+[Unit]
+Description=Surface ACPI Quell — Prometheus metrics exporter
+Documentation=file:/usr/local/share/doc/surface-acpi-quell/README.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/surface-acpi-metrics
+Restart=on-failure
+RestartSec=5
+User=root
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

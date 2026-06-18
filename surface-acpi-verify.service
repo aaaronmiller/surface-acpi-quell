@@ -9,6 +9,9 @@ Type=oneshot
 ExecStart=/usr/local/bin/surface-acpi-verify
 StandardOutput=journal
 StandardError=journal
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=sysinit.target

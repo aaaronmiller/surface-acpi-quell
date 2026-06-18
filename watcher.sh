@@ -14,9 +14,32 @@ SCRIPTPATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-# Source config file if it exists (overrides defaults below)
+# Source config file if it exists (safe key=value parser — no bash execution)
+# Lines must match ^[A-Z_]+=value. Comments (#) and blank lines are ignored.
 CONFIG_FILE="/etc/surface-acpi-quell/config.conf"
-[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE" 2>/dev/null || true
+if [ -f "$CONFIG_FILE" ]; then
+    # Verify ownership: must be root:root or owned by effective user
+    cfg_owner=$(stat -c "%U:%G" "$CONFIG_FILE" 2>/dev/null || echo "unknown")
+    case "$cfg_owner" in
+        root:root|root:*) ;;
+        *) echo "surface-acpi-watcher: WARNING config $CONFIG_FILE owned by $cfg_owner, skipping" >&2
+           cfg_skip=1 ;;
+    esac
+    if [ -z "${cfg_skip:-}" ]; then
+        while IFS='=' read -r cfg_key cfg_val; do
+            case "$cfg_key" in
+                GPE_LIST|IRQ_THRESHOLD|ACPI_ERR_THRESHOLD|IRQ_NUMBER|MODULE_CHECK_INTERVAL_MS|WATCHER_INTERVAL|HISTORY_MAX_ENTRIES|GPE_AUTO_DETECT_RATE|REQUIRE_SURFACE_HARDWARE|ENABLE_NOTIFICATIONS|ENABLE_WALL)
+                    eval "export $cfg_key=\$cfg_val"
+                    ;;
+                MONITOR_PATHS)
+                    export MONITOR_PATHS="$cfg_val"
+                    ;;
+                *) ;;
+            esac
+        done < <(grep -v '^[[:space:]]*#' "$CONFIG_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | grep '^[A-Z_][A-Z_]*=')
+    fi
+    unset cfg_skip cfg_owner cfg_key cfg_val
+fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 # Override these by setting env vars: SURFACE_ACPI_MODULE=...
@@ -241,6 +264,37 @@ print_status() {
     echo "  Errors:  $e"
 }
 
+
+# ── Short Status (parseable one-liner) ─────────────────────────────────────
+
+do_short_status() {
+    local data_dir="/var/lib/surface-acpi-quell"
+    local state_file="$data_dir/state.json"
+    local mod irq err upt
+    mod="?"
+    irq="?"
+    err="?"
+    upt="?"
+    if [ -f "$state_file" ]; then
+        mod=$(grep -o '"module_loaded": [01]' "$state_file" | cut -d' ' -f2)
+        irq=$(grep -o '"irq9_count": [0-9\-]*' "$state_file" | cut -d' ' -f2)
+        err=$(grep -o '"acpi_errors_1m": [0-9\-]*' "$state_file" | cut -d' ' -f2)
+        upt=$(grep -o '"uptime_seconds": [0-9]*' "$state_file" | cut -d' ' -f2)
+    fi
+    # Fallback uptime
+    [ "$upt" = "0" ] || [ -z "$upt" ] && upt=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+    # Format uptime
+    if [ "$upt" -gt 86400 ]; then
+        upt_str="$((upt / 86400))d"
+    elif [ "$upt" -gt 3600 ]; then
+        upt_str="$((upt / 3600))h"
+    else
+        upt_str="${upt}s"
+    fi
+    local status="OK"
+    [ "$mod" != "1" ] && status="FAIL" && irq="ERR"
+    echo "${status}|IRQ9=${irq}|MOD=${mod}|ERR=${err}|UPTIME=${upt_str}"
+}
 
 # ── Report ───────────────────────────────────────────────────────────────────
 
