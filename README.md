@@ -1,5 +1,11 @@
 # Surface ACPI Quell
 
+![Architecture](docs/screenshot.png)
+
+[![GitHub stars](https://img.shields.io/github/stars/aaaronmiller/surface-fixed-event-quell?style=flat-square)](https://github.com/aaaronmiller/surface-fixed-event-quell)
+[![License](https://img.shields.io/github/license/aaaronmiller/surface-fixed-event-quell?style=flat-square)](MIT)
+[![C](https://img.shields.io/badge/language-C-blue?style=flat-square&logo=c)](https://en.wikipedia.org/wiki/C_(programming_language))
+
 **Silence the ACPI interrupt storm on Microsoft Surface laptops running Linux.**
 
 Surface firmware emits **~227,000 unnecessary ACPI interrupts per second** — GPEs and fixed events that the Linux kernel can't handle because Microsoft's ACPI tables lack the expected implementations. This floods the CPU, spins up fans, burns NVMe writes with error logs, and drains battery.
