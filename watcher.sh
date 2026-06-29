@@ -81,11 +81,17 @@ check_module() {
 
 check_irq9() {
     local c1 c2 delta
-    c1=$(awk '/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}' /proc/interrupts 2>/dev/null || echo 0)
+    # Emit EMPTY (not 0) on read failure so a genuine read error is
+    # distinguishable from a healthy zero count. A zero IRQ-9 count is the
+    # GOOD state (storm fully quelled) and must NOT be treated as a failure —
+    # the old `[ "$c1" = "0" ]` guard misread it as "cannot read", which made
+    # main() call repair_irq9() and rmmod/modprobe the ACPI module every 60s
+    # (spurious fixed-ACPI events → session logout).
+    c1=$(awk '/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}' /proc/interrupts 2>/dev/null || echo "")
     sleep 1
-    c2=$(awk '/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}' /proc/interrupts 2>/dev/null || echo 0)
+    c2=$(awk '/acpi/ {s=0; for(i=2;i<=NF-3;i++) s+=$i; print s}' /proc/interrupts 2>/dev/null || echo "")
 
-    if [ -z "$c1" ] || [ -z "$c2" ] || [ "$c1" = "0" ]; then
+    if [ -z "$c1" ] || [ -z "$c2" ]; then
         notify "Cannot read ACPI IRQ count — /proc/interrupts issue?"
         return 1
     fi

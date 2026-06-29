@@ -12,6 +12,11 @@ ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_SYS_MODULE
+# ProtectSystem=strict makes the whole tree read-only; the watcher still needs
+# a writable /tmp (auto_detect_gpes mktemp) and its data dir (history/state).
+PrivateTmp=yes
+StateDirectory=surface-acpi-quell
+ReadWritePaths=/var/lib/surface-acpi-quell
 
 [Install]
 WantedBy=multi-user.target
